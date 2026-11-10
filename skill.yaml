@@ -1,0 +1,5 @@
+name: space_async_jobs
+title: Space Async Jobs
+description: Build an asynchronous job queue for a Muse Space (fullstack web artifact), スペースの非同期処理・非同期ジョブ, using its own DB as the source of truth, a JSONL signal file (信号ファイル), a polling hook dispatcher (監視フック) and an agent worker with CAS claims, plus a reconciler safety net.
+category: Work and knowledge
+include_in_prompt: false
