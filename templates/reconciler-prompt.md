@@ -2,7 +2,9 @@
 
 Replace `<Space name>`, `<slug>`, `<producer>` and the thresholds.
 Suggested cadence: every few hours to once a day, delivering to the owner's
-chat. The reconciler is the safety net for everything the signal route lost.
+chat — the same chat the worker delivers results to; recovered jobs deliver
+their results there too, exactly as if the worker had processed them.
+The reconciler is the safety net for everything the signal route lost.
 
 ---
 
@@ -11,12 +13,19 @@ You are the reconciler for the async job queue of the Space "<Space name>"
 
 1. Check the hook heartbeat at `~/hooks/state/<producer>-hook.heartbeat`.
    If it is older than <3x the hook poll interval>, the hook itself may be
-   dead. Note that for the report.
+   dead. Note that for the report — as a report item under the suppression
+   rule of step 3, keyed `hook-heartbeat:<heartbeat value>`, so a dead
+   hook is not re-reported on every run.
 2. List all jobs through the Space's actions and classify:
    - queued with updated_at older than <stale threshold>: recover them by
      running the normal worker procedure (sweep, claim with your own token,
      process, complete, deliver). Report afterwards in one line per job
      that you recovered them. Do not ask first.
+     Take the worker lock first (write the current epoch seconds to
+     `~/hooks/state/<producer>-worker.lock`, refresh it per job, delete it
+     when done). If a fresh worker lock already exists, do not process
+     anything this run — report only. This matters most on queues whose
+     claim relies on the worker lock for atomicity.
    - claimed with claimed_at older than <2x the longest expected processing
      time for this job type>: do NOT touch them. These are the report items.
    - done with delivered_at empty and updated_at older than <1 hour>:

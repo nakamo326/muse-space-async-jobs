@@ -30,7 +30,9 @@
 
 - Make every status transition a compare-and-swap that writes only when the current status matches the expected one and returns whether it wrote, following the contract in [templates/action-contract.md](templates/action-contract.md).
 
-- Emit a signal inside every action that moves a job into queued, including manual requeue and reset, or the job will sit still until the next unrelated job or the reconciler arrives.
+- Emit a signal inside every action that moves a job into queued, including submit from draft, manual requeue and reset, or the job will sit still until the next unrelated job or the reconciler arrives.
+
+- Reset attempts to 0 on a manual requeue, so a human retry after fixing the cause always becomes a processing target again; the attempts cap guards automatic paths, not explicit human retries.
 
 ## Emit and read the signal
 
@@ -40,7 +42,7 @@
 
 - Write each line as one single write of the stringified JSON plus a newline, wrapped so a failed emit never fails the action itself, and let the reconciler recover the job later.
 
-- Put the production DB instance_id in the env field, read from a meta row that only the production DB carries, and have the dispatcher ignore lines whose env does not match its configured instance.
+- Put the production DB instance_id in the env field, read from a meta row created in the production DB, and have the dispatcher ignore lines whose env does not match its configured instance. Verify that sandbox copies do not carry the row (checklist), because a full data copy carries the same instance_id and defeats the marker.
 
 - Keep job content, instructions, personal data, file paths and credentials out of the signal, because the worker re-reads everything from the store anyway and anything in the signal is an injection surface.
 
@@ -48,7 +50,7 @@
 
 - Build the dispatcher from [templates/hook-script.sh](templates/hook-script.sh), a bash polling hook under `~/hooks/scripts/` with its state under `~/hooks/state/`, and dry-run it for both the silent and the wake outcome before enabling it.
 
-- Cap the hook at one wake per poll no matter how many new events arrived, and pass no signal values inside the wake payload.
+- Cap the hook at one wake per poll no matter how many new events arrived, and pass no ids or job data inside the wake payload. The single allowed value is the max hop scalar, and only so an opted-in worker can continue its chain; the hook itself drops lines whose hop exceeds the cap.
 
 - Parse each signal line strictly, drop lines that fail the field patterns, and ignore a trailing line that does not end with a newline because it may still be mid-write.
 
@@ -64,13 +66,13 @@
 
 - Make the worker create the worker lock at start, refresh it per job and delete it at the end, and generate its worker token once per run for the claim calls.
 
-- Fail a job whose payload cannot be read or validated before claiming, instead of leaving it queued where it blocks the head of the queue on every sweep.
+- Move a job whose payload cannot be read or validated to failed with the contract's queued-state fail path (rejectInvalid), instead of leaving it queued where it blocks the head of the queue on every sweep.
 
 - Count attempts as successful claims, and move jobs at three or more attempts out of the sweep into a report, so one poison job cannot consume the queue.
 
 - Deliver in the order complete with result_ref, then deliver to the chat, then record delivered_at, and stop the delivery when complete fails because the job no longer belongs to this worker.
 
-- Allow a self-continuation signal only as an opt-in, only when the run moved at least one job out of queued, with hop incremented and capped, and as the worker's last action.
+- Allow a self-continuation signal only as an opt-in, only when the run moved at least one job out of queued, with hop set to the wake payload's max_hop plus one and capped by the hook, written in the full signal format with the queue's instance_id, and as the worker's last job-store action.
 
 ## Add the reconciler by tier
 
@@ -88,12 +90,6 @@
 
 - Run the three measurement tests in that checklist at least once per environment, covering claim atomicity under parallel calls, wake multiplicity of the hook runtime and the sandbox versus production difference visible to Space code.
 
-- Recover a stuck queue with the runbook in the checklist, stopping the hook, cleaning test lines from the signal, resetting the seen record, restarting the hook and letting the sweep recover real jobs from the store.
+- Recover a stuck queue with the runbook in the checklist, stopping the hook, cleaning test lines from the signal, resetting the seen record, removing a stale worker lock, restarting the hook and letting the sweep recover real jobs from the store.
 
-- Record known gaps honestly when an existing implementation does not meet the contract yet, as the café reference implementation still uses an unconditional status update instead of CAS, instead of claiming the standard is already met.
-
-## Available connectors
-
-- Use `muse.connector_search` to find other connectors and `muse.skill_search` to find related skills.
-
-- If nothing here fits, look on the web for a maintained API or MCP server and set it up with [Custom Connectors and MCPs](/opt/muse/skills/custom-connector-setup/SKILL.md), or build a custom connector.
+- Record known gaps honestly when an existing implementation does not meet the contract yet, as the reference implementation (an order-form Space with a voice-production worker) still uses an unconditional status update instead of CAS, instead of claiming the standard is already met.
